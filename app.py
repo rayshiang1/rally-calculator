@@ -12,6 +12,7 @@ hide_st_style = """
             #MainMenu {visibility: hidden;}
             footer {visibility: hidden;}
             header {visibility: hidden;}
+            div.block-container {padding-top: 2rem;}
             </style>
             """
 st.markdown(hide_st_style, unsafe_allow_html=True)
@@ -56,28 +57,28 @@ def format_timer(seconds: float) -> str:
     return f"{m:02d}:{s:02d}"
 
 with st.sidebar:
-    st.header("👥 Player Roster")
+    st.header("👥 Roster Manager")
     
-    with st.expander("➕ Add New Player", expanded=True):
+    with st.expander("✏️ Add / Update Player", expanded=True):
         new_name = st.text_input("Name", placeholder="Player Name")
         new_time_str = st.text_input("March Time", placeholder="e.g. 45, 1:30")
         
-        if st.button("Save Player"):
+        if st.button("Save / Update"):
             secs = parse_seconds(new_time_str)
             if new_name and secs > 0:
+                action = "Updated" if new_name in st.session_state.roster else "Added"
                 st.session_state.roster[new_name] = secs
                 save_roster(st.session_state.roster)
-                st.success(f"Added {new_name} ({secs}s)")
+                st.success(f"{action} {new_name} ({secs}s)")
                 time.sleep(0.5)
                 st.rerun()
             else:
-                st.error("Invalid name or time.")
+                st.error("Invalid input.")
 
     if st.session_state.roster:
         st.write("---")
-        st.write("❌ **Remove Player**")
         to_remove = st.selectbox("Select to delete", [""] + list(st.session_state.roster.keys()))
-        if to_remove and st.button(f"Delete {to_remove}"):
+        if to_remove and st.button(f"Delete {to_remove}", type="secondary"):
             del st.session_state.roster[to_remove]
             save_roster(st.session_state.roster)
             st.rerun()
@@ -90,25 +91,22 @@ is_defense = "Defense" in mode
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    st.markdown("### 1. Select Participants")
+    st.markdown("### 1. Participants")
     roster_options = {f"{name} ({t}s)": {"name": name, "time": t} for name, t in st.session_state.roster.items()}
-    
     sorted_options = sorted(roster_options.keys(), key=lambda k: roster_options[k]['time'], reverse=True)
     
-    # ★ 修改處：加入 default=sorted_options 全選所有名單
     selected_labels = st.multiselect(
-        "Who is available? (Uncheck offline players)", 
+        "Select players (Default: All)", 
         options=sorted_options,
         default=sorted_options, 
-        placeholder="Select online players..."
+        placeholder="Pick players..."
     )
     
-    manual_input = st.text_input("Manual Input (Optional)", placeholder="e.g. 45 1:30")
-
-    limit_count = st.number_input("Max Participants (Auto-select best fit)", min_value=1, value=15, step=1)
+    manual_input = st.text_input("Manual Add (Optional)", placeholder="e.g. 45 1:30")
+    limit_count = st.number_input("Auto-Select Best Fit (Max)", min_value=1, value=15, step=1)
 
 with col2:
-    st.markdown("### 2. Target Info")
+    st.markdown("### 2. Target")
     if is_defense:
         c2a, c2b = st.columns(2)
         with c2a:
@@ -122,7 +120,6 @@ with col2:
 st.divider()
 
 all_pool = []
-
 for label in selected_labels:
     data = roster_options[label]
     all_pool.append({"name": data["name"], "time": data["time"]})
@@ -131,21 +128,18 @@ if manual_input:
     manual_times = manual_input.replace(",", " ").split()
     for i, t_str in enumerate(manual_times):
         s = parse_seconds(t_str)
-        if s > 0:
-            all_pool.append({"name": f"Manual-{i+1}", "time": s})
+        if s > 0: all_pool.append({"name": f"Manual-{i+1}", "time": s})
 
 if not all_pool:
-    st.info("👈 Please check players in the list.")
+    st.info("👈 Waiting for players...")
 else:
     all_pool.sort(key=lambda x: x['time'], reverse=True)
-    
     starter = all_pool[0]
     
     for p in all_pool:
         p['gap'] = starter['time'] - p['time']
     
     all_pool.sort(key=lambda x: x['gap'])
-    
     final_participants = all_pool[:limit_count]
     reserves = all_pool[limit_count:]
 
@@ -164,24 +158,12 @@ else:
     for p in final_participants:
         t = p["time"]
         wait_seconds = impact_time_rel - t
-
-        is_late = False
-        if is_defense and wait_seconds < 0:
-            is_late = True
-
-        results.append({
-            "name": p["name"],
-            "travel": t,
-            "wait": wait_seconds,
-            "is_late": is_late
-        })
+        is_late = is_defense and wait_seconds < 0
+        results.append({"name": p["name"], "travel": t, "wait": wait_seconds, "is_late": is_late})
     
     results.sort(key=lambda x: x['wait'])
 
-    st.subheader(f"{mode_title} - Top {len(final_participants)} Picked")
-    
-    if reserves:
-        st.caption(f"⚠️ **Reserves (Excluded):** {', '.join([r['name'] for r in reserves])}")
+    st.subheader(f"{mode_title}")
 
     display_data = []
     copy_lines = [f"--- Plan: {target_name} ---"]
@@ -210,14 +192,19 @@ else:
         })
         copy_lines.append(f"[{res['name']}]: {action}")
 
-    st.table(pd.DataFrame(display_data))
-
-    with st.expander("📋 Copy for Chat"):
-        st.code("\n".join(copy_lines), language="yaml")
+    col_table, col_copy = st.columns([2, 1])
+    with col_table:
+        st.dataframe(pd.DataFrame(display_data), use_container_width=True, hide_index=True)
+    
+    with col_copy:
+        st.text_area("📋 Copy Text", "\n".join(copy_lines), height=200)
+        if reserves:
+            st.caption(f"⚠️ **Reserves:** {', '.join([r['name'] for r in reserves])}")
 
     st.divider()
 
-    st.write("### ⏱️ Live Dashboard")
+    # --- Live Dashboard ---
+    st.write("### ⏱️ Live Sequence")
     
     if st.button("🚀 Start Sequence (Lock Time)", type="primary", use_container_width=True):
         start_ts = time.time()
@@ -228,34 +215,67 @@ else:
         else:
             max_wait = 0
         
-        status_ph = st.empty()
+        # 版面配置：左邊大字提示，右邊詳細表格
+        live_col1, live_col2 = st.columns([1, 2])
+        
+        with live_col1:
+            spotlight = st.empty()
+            progress_bar = st.progress(0)
+        
+        with live_col2:
+            table_ph = st.empty()
         
         while True:
             elapsed = time.time() - start_ts
             current_status = []
             
+            # 1. 敵軍/目標狀態
             if is_defense:
                 enemy_left = impact_time_rel - elapsed
                 e_state = "💥 IMPACT" if enemy_left <= 0 else f"⚔️ {int(enemy_left)}s"
-                current_status.append({"Player": "🔴 ENEMY", "Status": e_state, "Action": "INCOMING"})
+                current_status.append({"Player": "🔴 ENEMY", "Status": e_state, "Wait": enemy_left})
+                
+                # 更新進度條 (倒數 Enemy Arrival)
+                prog_val = 1.0 - (enemy_left / impact_time_rel) if impact_time_rel > 0 else 0
+                progress_bar.progress(min(max(prog_val, 0.0), 1.0))
 
+            # 2. 玩家狀態
             all_done = True
+            next_action_text = "✅ All Sent"
+            next_action_time = 999999
+            
             for res in results:
                 name_disp = f"{res['name']} ({res['travel']}s)"
                 
                 if res['is_late']:
-                    current_status.append({"Player": name_disp, "Status": "💀 LATE", "Action": "SKIP"})
+                    current_status.append({"Player": name_disp, "Status": "💀 LATE"})
                     continue
                 
                 time_left = res['wait'] - elapsed
                 
                 if time_left <= 0:
-                    current_status.append({"Player": name_disp, "Status": "✅ GO NOW!", "Action": "SENT"})
+                    current_status.append({"Player": name_disp, "Status": "✅ SENT"})
                 else:
                     all_done = False
-                    current_status.append({"Player": name_disp, "Status": f"⏳ {time_left:.1f}s", "Action": "WAIT"})
-            
-            status_ph.table(pd.DataFrame(current_status))
+                    current_status.append({"Player": name_disp, "Status": f"⏳ {time_left:.1f}s"})
+                    
+                    # 找出最接近的一個行動
+                    if time_left < next_action_time:
+                        next_action_time = time_left
+                        next_action_text = f"🚀 Next: {res['name']}\nin {time_left:.1f}s"
+
+            # 更新左側大字
+            if all_done:
+                spotlight.success("## ✅ Complete")
+            elif next_action_time < 2:
+                spotlight.error(f"## {next_action_text}") # 快到了變紅色
+            else:
+                spotlight.info(f"## {next_action_text}")
+
+            # 更新右側表格
+            df_live = pd.DataFrame(current_status)
+            if "Wait" in df_live.columns: df_live = df_live.drop(columns=["Wait"]) # 隱藏計算欄位
+            table_ph.dataframe(df_live, use_container_width=True, hide_index=True)
             
             defense_end = (not is_defense) or (is_defense and (impact_time_rel - elapsed <= 0))
             if all_done and defense_end and elapsed > (max_wait + 3):
