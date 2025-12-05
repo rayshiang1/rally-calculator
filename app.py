@@ -102,25 +102,29 @@ with st.sidebar:
 st.title("⚔️ War Sync Calculator")
 
 # Mode Selection
-col_mode1, col_mode2 = st.columns([1, 1])
+col_mode1, col_mode2, col_mode3 = st.columns([1, 1, 1])
 with col_mode1:
     mode = st.radio("", ["⚔️ Attack / Rally", "🛡️ Defense / Garrison"], horizontal=True)
     is_defense = "Defense" in mode
 with col_mode2:
     is_multi = st.toggle("🔥 Multi-Rally Mode", value=False)
+with col_mode3:
+    # [New Feature] Limit players per target
+    limit_per_target = st.number_input("Max Players per Target", min_value=1, value=6, step=1)
 
 st.divider()
 
 # --- Data Prep ---
 roster_data = [{"name": n, "time": t} for n, t in st.session_state.roster.items()]
-roster_data.sort(key=lambda x: x['time'], reverse=True) # Sort by slowest first
+# Sort by Time Descending (Slowest first) -> crucial for picking the "Best" 6 anchors
+roster_data.sort(key=lambda x: x['time'], reverse=True) 
 all_player_names = [p['name'] for p in roster_data]
 
 # --- Input Handling ---
 targets_list = []
 
 if is_multi:
-    st.info("💡 **Waterfall Logic:** Players removed from the 1st target will automatically flow to the 2nd target.")
+    st.info(f"💡 **Waterfall Logic:** Auto-assigns top **{limit_per_target}** available players (slowest first) to each target.")
     
     # Initialize Table
     if 'multi_target_df' not in st.session_state:
@@ -177,7 +181,11 @@ remaining_players = all_player_names.copy()
 
 if not is_multi:
     with c1:
-        selected = st.multiselect("Select Players", remaining_players, default=remaining_players)
+        # Default selects everyone, but user usually manually filters in single mode
+        # Or we can limit the default selection here too if desired
+        default_sel = remaining_players[:limit_per_target]
+        selected = st.multiselect("Select Players", remaining_players, default=default_sel)
+        
         manual_add = st.text_input("Manual Add (Optional)", placeholder="e.g. 45 1:30")
         
     current_pool = [p for p in roster_data if p['name'] in selected]
@@ -190,27 +198,26 @@ if not is_multi:
 
 else:
     # Multi Mode Assignment
-    st.markdown("### 👮 Assign Players (Waterfall Mode)")
+    st.markdown(f"### 👮 Assign Players (Max {limit_per_target} per Target)")
     cols = st.columns(len(targets_list)) if len(targets_list) > 0 else [st.container()]
     
     for i, target in enumerate(targets_list):
         with cols[i % len(cols)]: 
             st.markdown(f"**Target: {target['name']}**")
             
-            # [Modified] Default is now ALL remaining players
-            # This creates the "Waterfall" effect:
-            # 1. Target A gets everyone by default.
-            # 2. You UNCHECK players from Target A.
-            # 3. Those unchecked players become the 'remaining_players' for Target B.
-            # 4. Target B gets them by default.
+            # [Modified] Waterfall with Limit
+            # 1. Take remaining players
+            # 2. Slice the top N (limit_per_target)
+            auto_picks = remaining_players[:limit_per_target]
+            
             selected_for_target = st.multiselect(
                 f"Pick for {target['name']}", 
                 options=remaining_players,
-                default=remaining_players, # <--- Auto-select everyone available
+                default=auto_picks, # <--- Only select the top 6 by default
                 key=f"multi_select_{i}"
             )
             
-            # Calculate remaining for the NEXT target
+            # Update remaining for next loop
             remaining_players = [p for p in remaining_players if p not in selected_for_target]
             
             pool = [p for p in roster_data if p['name'] in selected_for_target]
