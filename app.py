@@ -65,18 +65,15 @@ def parse_seconds(time_str: str) -> int:
     """
     time_str = str(time_str).lower().strip()
     
-    # 1. Check for pure number (default to seconds)
     if time_str.isdigit(): 
         return int(time_str)
     
-    # 2. Check for mm:ss format
     if ":" in time_str:
         parts = time_str.split(":")
         if len(parts) == 2:
             try: return int(parts[0]) * 60 + int(parts[1])
             except: pass
             
-    # 3. Check for 1m 30s format
     seconds = 0
     match_m = re.search(r"(\d+)m", time_str)
     match_s = re.search(r"(\d+)s", time_str)
@@ -133,7 +130,6 @@ st.divider()
 
 # --- Data Prep ---
 roster_data = [{"name": n, "time": t} for n, t in st.session_state.roster.items()]
-# Sort by Time Descending (Slowest first)
 roster_data.sort(key=lambda x: x['time'], reverse=True) 
 all_player_names = [p['name'] for p in roster_data]
 
@@ -143,16 +139,15 @@ targets_list = []
 if is_multi:
     c_info, c_reset = st.columns([4, 1])
     with c_info:
-        st.info(f"💡 **Dynamic Mode:** Adding rows won't reset existing assignments. Time format: '1:30' or just '90' (seconds).")
+        st.info(f"💡 **Dynamic Mode:** Adding rows won't reset existing assignments. Time format: '1:30' or '90'.")
     with c_reset:
         if st.button("🔄 Reset All"):
             st.session_state.saved_assignments = {}
             st.rerun()
 
-    # Initialize Table
     if 'multi_target_df' not in st.session_state:
         st.session_state.multi_target_df = pd.DataFrame(
-            [{"Target Name": "Rally A", "March (s)": 30, "Rally (m:s)": "300"}] # Default example using seconds
+            [{"Target Name": "Rally A", "March (s)": 30, "Rally (m:s)": "300"}] 
         )
 
     edited_df = st.data_editor(
@@ -162,7 +157,7 @@ if is_multi:
         column_config={
             "Target Name": st.column_config.TextColumn("Target Name", help="Unique Name Required", required=True),
             "March (s)": st.column_config.NumberColumn("March (s)", min_value=0, step=1, required=True),
-            "Rally (m:s)": st.column_config.TextColumn("Rally (m:s)", help="e.g. '5:00' or '300' (seconds)", required=True),
+            "Rally (m:s)": st.column_config.TextColumn("Rally (m:s)", help="e.g. '5:00' or '300'", required=True),
         }
     )
     
@@ -175,7 +170,6 @@ if is_multi:
             })
 
 else:
-    # Single Mode UI
     c1, c2 = st.columns([2, 1])
     with c1:
         st.markdown("### Participants")
@@ -197,7 +191,7 @@ else:
             "enemy_rally": e_rally
         })
 
-# --- Assignment Logic (Dynamic Persistence) ---
+# --- Assignment Logic ---
 master_results = []
 remaining_players = all_player_names.copy()
 global_assigned_set = set()
@@ -253,15 +247,13 @@ display_sections = []
 
 for target in targets_list:
     pool = target.get('assigned_pool', [])
-    
-    if not pool:
-        continue
+    if not pool: continue
 
     starter = max(pool, key=lambda x: x['time']) 
     max_time = starter['time']
     
     if is_defense:
-        e_sec = parse_seconds(target['enemy_rally']) # <--- Function handles pure seconds correctly
+        e_sec = parse_seconds(target['enemy_rally'])
         impact_time = e_sec + target['enemy_march'] + 1
         if impact_time == 1: impact_time = max_time 
         mode_title = f"🛡️ {target['name']} (Impact: {impact_time}s)"
@@ -277,8 +269,6 @@ for target in targets_list:
     for i, p in enumerate(pool):
         wait = impact_time - p['time']
         is_late = is_defense and wait < 0
-        
-        # [Filter] Hide Late Players
         if is_late: continue
         
         if wait == 0: 
@@ -295,15 +285,17 @@ for target in targets_list:
             "wait": wait,
             "send_str": send_str,
             "action": action,
-            "role": "Starter" if i==0 else "Follower"
+            "role": "Starter" if i==0 else "Follower",
+            "impact_time": impact_time,
+            "enemy_rally_sec": parse_seconds(target['enemy_rally']),
+            "enemy_march": target['enemy_march']
         }
         target_results.append(res_obj)
-        master_results.append(res_obj)
+        master_results.extend(target_results) # Flat list for calculation
         copy_lines.append(f"[{p['name']}]: {action}")
 
     if target_results:
         target_results.sort(key=lambda x: x['wait'])
-        
         df_disp = pd.DataFrame([{
             "Role": r['role'], 
             "Player": r['name'], 
@@ -318,102 +310,115 @@ for target in targets_list:
             "copy_text": "\n".join(copy_lines)
         })
 
-# --- Display Plans (Independent Blocks) ---
 if display_sections:
     st.subheader("📋 Strategy Plans")
-    
-    # [New Display Logic] Independent blocks instead of Tabs
     for section in display_sections:
-        with st.container(border=True): # Independent container for each target
+        with st.container(border=True):
             st.markdown(f"#### {section['title']}")
-            
             c_table, c_copy = st.columns([3, 1])
             with c_table:
                 st.dataframe(section['df'], hide_index=True, use_container_width=True)
             with c_copy:
-                st.text_area(f"Copy ({section['title']})", section['copy_text'], height=150, key=f"copy_{section['title']}")
-
+                st.text_area(f"Copy", section['copy_text'], height=150, key=f"copy_{section['title']}")
 else:
     st.warning("⚠️ No valid plans generated. Check players or times.")
 
 
-# --- Live Dashboard ---
+# --- Live Dashboard (Independent Blocks) ---
 st.divider()
 st.write("### ⏱️ Master Live Sequence")
 
 if st.button("🚀 Start Sequence (All Targets)", type="primary", use_container_width=True):
     start_ts = time.time()
     
+    # Calculate Max Wait for exit condition
+    max_wait_total = 0
     if master_results:
         max_wait_total = max([r['wait'] for r in master_results])
-        max_impact = 0
-        for t in targets_list:
-             imp = parse_seconds(t['enemy_rally']) + t['enemy_march'] + 1
-             if imp > max_impact: max_impact = imp
-        max_wait_total = max(max_wait_total, max_impact)
-    else:
-        max_wait_total = 0
-
-    l_col1, l_col2 = st.columns([1, 2])
-    with l_col1:
-        spotlight = st.empty()
-        st.caption("Monitoring all targets...")
-    with l_col2:
-        table_ph = st.empty()
+    
+    # 1. Global Spotlight (Top)
+    spotlight_ph = st.empty()
+    
+    # 2. Setup Independent Placeholders for each Target
+    target_placeholders = {}
+    
+    # Create Layout: If Multi, maybe use columns? Or vertical stack?
+    # Vertical stack with border is cleanest for independent monitoring.
+    st.caption("Monitoring active targets...")
+    
+    # We iterate through unique targets present in master_results
+    unique_target_names = list(set([r['target'] for r in master_results]))
+    
+    # Create a container for each active target
+    for t_name in unique_target_names:
+        with st.container(border=True):
+            st.markdown(f"#### 📡 Live: {t_name}")
+            target_placeholders[t_name] = st.empty()
 
     while True:
         elapsed = time.time() - start_ts
-        live_rows = []
         
-        # 1. Show Enemy Impacts
-        if is_defense:
-            for t in targets_list:
-                imp = parse_seconds(t['enemy_rally']) + t['enemy_march'] + 1
+        # --- Global Next Action Calculation ---
+        next_event_time_global = 9999
+        next_event_text_global = "✅ All Clear"
+        all_sent_global = True
+        
+        # --- Loop per Target to update independent tables ---
+        for t_name in unique_target_names:
+            # Filter results for this target
+            t_results = [r for r in master_results if r['target'] == t_name]
+            live_rows = []
+            
+            # A. Enemy Status (If Defense)
+            if is_defense and t_results:
+                # Retrieve stored enemy data from the first player record of this target
+                # (A bit hacky but works since all players in target share same enemy info)
+                imp = t_results[0]['impact_time']
                 left = imp - elapsed
                 status = "💥 IMPACT" if left <= 0 else f"⚔️ {left:.1f}s"
-                live_rows.append({"Target": t['name'], "Player": "🔴 ENEMY", "Status": status, "SortKey": left})
+                live_rows.append({"Player": "🔴 ENEMY", "Status": status, "SortKey": left})
 
-        # 2. Show Player Actions
-        all_sent = True
-        next_event_time = 9999
-        next_event_text = "✅ All Clear"
-        
-        for res in master_results:
-            time_left = res['wait'] - elapsed
-            p_label = f"{res['name']} ({res['travel']}s)"
-            
-            if time_left <= 0:
-                status = "✅ SENT"
-                sort_key = -999 
-            else:
-                all_sent = False
-                status = f"⏳ {time_left:.1f}s"
-                sort_key = time_left
+            # B. Player Status
+            for res in t_results:
+                time_left = res['wait'] - elapsed
+                p_label = f"{res['name']} ({res['travel']}s)"
                 
-                if time_left < next_event_time:
-                    next_event_time = time_left
-                    next_event_text = f"🚀 {res['name']} \n➜ {res['target']}\nin {time_left:.1f}s"
+                if time_left <= 0:
+                    status = "✅ SENT"
+                    sort_key = -999 
+                else:
+                    all_sent_global = False
+                    status = f"⏳ {time_left:.1f}s"
+                    sort_key = time_left
+                    
+                    # Check for global spotlight
+                    if time_left < next_event_time_global:
+                        next_event_time_global = time_left
+                        next_event_text_global = f"🚀 {res['name']} \n➜ {res['target']}\nin {time_left:.1f}s"
 
-            live_rows.append({
-                "Target": res['target'],
-                "Player": p_label, 
-                "Status": status, 
-                "SortKey": sort_key
-            })
-        
-        live_rows.sort(key=lambda x: x['SortKey'])
-        
-        if all_sent:
-            spotlight.success("## ✅ Complete")
-        elif next_event_time < 3:
-            spotlight.error(f"## {next_event_text}")
+                live_rows.append({
+                    "Player": p_label, 
+                    "Status": status, 
+                    "SortKey": sort_key
+                })
+            
+            # Sort and Display for this target
+            live_rows.sort(key=lambda x: x['SortKey'])
+            df_live = pd.DataFrame(live_rows).drop(columns=["SortKey"])
+            
+            # Update the specific placeholder
+            target_placeholders[t_name].dataframe(df_live, use_container_width=True, hide_index=True)
+
+        # --- Update Global Spotlight ---
+        if all_sent_global:
+            spotlight_ph.success("## ✅ All Targets Complete")
+        elif next_event_time_global < 3:
+            spotlight_ph.error(f"## {next_event_text_global}")
         else:
-            spotlight.info(f"## {next_event_text}")
+            spotlight_ph.info(f"## {next_event_text_global}")
 
-        df_live = pd.DataFrame(live_rows).drop(columns=["SortKey"])
-        table_ph.dataframe(df_live, use_container_width=True, hide_index=True)
-        
-        if all_sent and elapsed > (max_wait_total + 3):
+        # Exit Condition
+        if all_sent_global and elapsed > (max_wait_total + 5):
             break
             
         time.sleep(0.1)
