@@ -5,7 +5,6 @@ import pandas as pd
 import requests
 import os
 
-# --- Configuration ---
 GAS_URL = "https://script.google.com/macros/s/AKfycbwYKFTNQTeoaATKxillgfdFgwJnTS4o7J0nkOG077GNcJFJGKw9xd151yFdvUdoB_r5QQ/exec"
 
 st.set_page_config(page_title="War Sync Calc", page_icon="⚔️", layout="wide")
@@ -23,7 +22,6 @@ hide_st_style = """
             """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
-# --- Google Sheet Connection ---
 def load_roster():
     try:
         if "YOUR_ID_HERE" in GAS_URL:
@@ -53,11 +51,9 @@ if 'roster' not in st.session_state:
     with st.spinner('Loading roster...'):
         st.session_state.roster = load_roster()
 
-# Initialize Assignment Memory
 if 'saved_assignments' not in st.session_state:
     st.session_state.saved_assignments = {}
 
-# --- Utility Functions ---
 def parse_seconds(time_str: str) -> int:
     time_str = str(time_str).lower().strip()
     if time_str.isdigit(): 
@@ -74,7 +70,6 @@ def parse_seconds(time_str: str) -> int:
     if match_s: seconds += int(match_s.group(1))
     return seconds if seconds > 0 else 0
 
-# --- Sidebar ---
 with st.sidebar:
     st.header("👥 Roster Manager")
     with st.expander("✏️ Add / Update Player", expanded=True):
@@ -105,10 +100,8 @@ with st.sidebar:
                 del st.session_state.roster[to_remove]
             st.rerun()
 
-# --- Main Interface ---
 st.title("⚔️ War Sync Calculator")
 
-# Mode Selection
 col_mode1, col_mode2, col_mode3 = st.columns([1, 1, 1])
 with col_mode1:
     mode = st.radio("", ["⚔️ Attack / Rally", "🛡️ Defense / Garrison"], horizontal=True)
@@ -120,12 +113,10 @@ with col_mode3:
 
 st.divider()
 
-# --- Data Prep ---
 roster_data = [{"name": n, "time": t} for n, t in st.session_state.roster.items()]
 roster_data.sort(key=lambda x: x['time'], reverse=True) 
 all_player_names = [p['name'] for p in roster_data]
 
-# --- Input Handling ---
 targets_list = []
 
 if is_multi:
@@ -183,7 +174,6 @@ else:
             "enemy_rally": e_rally
         })
 
-# --- Assignment Logic (Strict Exclusion) ---
 master_results = []
 
 if not is_multi:
@@ -212,8 +202,7 @@ else:
         t_name = target['name']
         with cols[i % len(cols)]: 
             st.markdown(f"**Target: {t_name}**")
-            
-            # Exclusion Logic
+
             busy_players = set()
             for other_name, assigned_list in st.session_state.saved_assignments.items():
                 if other_name != t_name: 
@@ -241,8 +230,6 @@ else:
             pool = [p for p in roster_data if p['name'] in selected_for_target]
             target['assigned_pool'] = pool
 
-
-# --- Calculation Loop ---
 st.write("---")
 
 display_sections = [] 
@@ -293,7 +280,7 @@ for target in targets_list:
             "enemy_march": target['enemy_march']
         }
         target_results.append(res_obj)
-        master_results.append(res_obj) # [Fixed] Changed from extend() to append() to prevent duplicates
+        master_results.append(res_obj)
         copy_lines.append(f"[{p['name']}]: {action}")
 
     if target_results:
@@ -312,39 +299,30 @@ for target in targets_list:
             "copy_text": "\n".join(copy_lines)
         })
 
-# --- Display Plans (Grid View) ---
 if display_sections:
     st.subheader("📋 Strategy Plans")
     
-    # [Fixed] Compact Grid Layout
-    # Create 2 Columns per row
     for i in range(0, len(display_sections), 2):
         row_cols = st.columns(2)
-        
-        # Display 1st item in left column
+
         with row_cols[0]:
             sec = display_sections[i]
             with st.container(border=True):
                 st.markdown(f"#### {sec['title']}")
                 st.dataframe(sec['df'], hide_index=True, use_container_width=True)
-                # Reduced height to 100
                 st.text_area(f"Copy", sec['copy_text'], height=100, key=f"copy_{i}")
-        
-        # Display 2nd item in right column (if exists)
+
         if i + 1 < len(display_sections):
             with row_cols[1]:
                 sec = display_sections[i+1]
                 with st.container(border=True):
                     st.markdown(f"#### {sec['title']}")
                     st.dataframe(sec['df'], hide_index=True, use_container_width=True)
-                    # Reduced height to 100
                     st.text_area(f"Copy", sec['copy_text'], height=100, key=f"copy_{i+1}")
 
 else:
     st.warning("⚠️ No valid plans generated. Check players or times.")
 
-
-# --- Live Dashboard (Independent Blocks) ---
 st.divider()
 st.write("### ⏱️ Master Live Sequence")
 
@@ -362,18 +340,14 @@ if st.button("🚀 Start Sequence (All Targets)", type="primary", use_container_
     
     unique_target_names = list(set([r['target'] for r in master_results]))
     
-    # Live Dashboard Grid View as well
     for i in range(0, len(unique_target_names), 2):
         l_cols = st.columns(2)
-        
-        # Left Block
         t_name = unique_target_names[i]
         with l_cols[0]:
             with st.container(border=True):
                 st.markdown(f"#### 📡 Live: {t_name}")
                 target_placeholders[t_name] = st.empty()
-        
-        # Right Block (if exists)
+
         if i + 1 < len(unique_target_names):
             t_name_2 = unique_target_names[i+1]
             with l_cols[1]:
@@ -437,3 +411,4 @@ if st.button("🚀 Start Sequence (All Targets)", type="primary", use_container_
         time.sleep(0.1)
     
     st.success("All sequences finished.")
+
