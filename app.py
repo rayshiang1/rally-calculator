@@ -5,10 +5,13 @@ import pandas as pd
 import requests
 import os
 
+# --- 設定區 ---
+# 請將此 URL 替換為您正確的 Google Apps Script 網址
 GAS_URL = "https://script.google.com/macros/s/AKfycbwYKFTNQTeoaATKxillgfdFgwJnTS4o7J0nkOG077GNcJFJGKw9xd151yFdvUdoB_r5QQ/exec"
 
 st.set_page_config(page_title="War Sync Calc", page_icon="⚔️", layout="wide")
 
+# 隱藏 Streamlit 預設樣式
 hide_st_style = """
             <style>
             #MainMenu {visibility: hidden;}
@@ -101,7 +104,7 @@ with st.sidebar:
                 with st.spinner('Saving to Google Sheet...'):
                     update_player_in_sheet(new_name, secs)
                 
-                # 2. 更新本地 Session State (避免重新讀取整個表，增加速度感)
+                # 2. 更新本地 Session State
                 st.session_state.roster[new_name] = secs
                 
                 action = "Updated" if new_name in st.session_state.roster else "Added"
@@ -113,7 +116,7 @@ with st.sidebar:
 
     if st.session_state.roster:
         st.write("---")
-        # 重新整理按鈕 (如果多人同時使用，可以手動同步)
+        # 重新整理按鈕
         if st.button("🔄 Sync with Sheet"):
              st.session_state.roster = load_roster()
              st.rerun()
@@ -161,8 +164,9 @@ with col2:
         with c2a:
             enemy_march = st.number_input("Enemy March (s)", min_value=0, value=0, step=1)
         with c2b:
-            enemy_rally = st.text_input("Enemy Rally", value="0:00")
+            enemy_rally = st.text_input("Enemy Rally (m:s)", value="0:00")
         target_name = "Defense Target"
+        st.caption("ℹ️ 自動加入 1 秒緩衝 (Target = Enemy + 1s)")
     else:
         target_name = st.text_input("Target Name", value="Target")
 
@@ -198,8 +202,12 @@ else:
     
     if is_defense:
         enemy_rally_sec = parse_seconds(enemy_rally)
-        impact_time_rel = enemy_rally_sec + enemy_march
-        if impact_time_rel == 0: impact_time_rel = max_time
+        # [修改] 防守模式：目標時間 = 敵軍集結時間 + 敵軍行軍時間 + 1秒緩衝
+        impact_time_rel = enemy_rally_sec + enemy_march + 1
+        
+        if impact_time_rel == 1: # 如果沒輸入任何時間，預設還是使用最慢者的時間
+             impact_time_rel = max_time
+             
         mode_title = f"🛡️ Timed Defense (Impact: {impact_time_rel}s)"
     else:
         impact_time_rel = max_time
@@ -211,11 +219,10 @@ else:
         wait_seconds = impact_time_rel - t
         is_late = is_defense and wait_seconds < 0
         
-        # --- [修改部分] 過濾掉遲到的人 ---
+        # [修改] 這裡過濾掉遲到 (Late) 的人，不顯示也不計算
         if is_late:
             continue
-        # -------------------------------
-
+        
         results.append({"name": p["name"], "travel": t, "wait": wait_seconds, "is_late": is_late})
     
     results.sort(key=lambda x: x['wait'])
@@ -231,7 +238,7 @@ else:
         else:
             role_icon = f"{i+1}️⃣ Follower"
 
-        # 因為上面已經把 is_late 的人過濾掉了，這裡的 is_late 判斷其實不會執行，但保留結構無妨
+        # 這裡的 is_late 雖然上面已經過濾了，但保留邏輯結構無妨
         if res['is_late']:
             status = "💀 TOO LATE"
             action = "SKIP"
@@ -252,7 +259,11 @@ else:
 
     col_table, col_copy = st.columns([2, 1])
     with col_table:
-        st.dataframe(pd.DataFrame(display_data), use_container_width=True, hide_index=True)
+        # 如果 results 是空的(全部遲到)，這裡顯示提示
+        if not results:
+             st.warning("⚠️ No valid participants. Everyone is too late!")
+        else:
+             st.dataframe(pd.DataFrame(display_data), use_container_width=True, hide_index=True)
     
     with col_copy:
         st.text_area("📋 Copy Text", "\n".join(copy_lines), height=200)
@@ -301,9 +312,8 @@ else:
             for res in results:
                 name_disp = f"{res['name']} ({res['travel']}s)"
                 
-                # 同樣，因為 upstream 已經過濾，這個區塊不會被觸發
+                # 再次過濾，雖然 results 裡已經沒有 late 了
                 if res['is_late']:
-                    current_status.append({"Player": name_disp, "Status": "💀 LATE"})
                     continue
                 
                 time_left = res['wait'] - elapsed
@@ -330,6 +340,7 @@ else:
             table_ph.dataframe(df_live, use_container_width=True, hide_index=True)
             
             defense_end = (not is_defense) or (is_defense and (impact_time_rel - elapsed <= 0))
+            # 增加一些緩衝時間讓迴圈結束，避免馬上消失
             if all_done and defense_end and elapsed > (max_wait + 3):
                 break
                 
