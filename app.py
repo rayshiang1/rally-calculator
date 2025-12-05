@@ -165,4 +165,256 @@ else:
     c1, c2 = st.columns([2, 1])
     with c1:
         st.markdown("### Participants")
-    with c2
+    with c2:
+        st.markdown("### Target")
+        if is_defense:
+            e_march = st.number_input("Enemy March (s)", 0, step=1)
+            e_rally = st.text_input("Countdown (m:s)", "0:00")
+            t_name = "Defense"
+            st.caption("ℹ️ Auto +1s Buffer (Target = Enemy + 1s)")
+        else:
+            e_march = 0
+            e_rally = "0:00"
+            t_name = st.text_input("Target Name", "Target")
+        
+        targets_list.append({
+            "name": t_name,
+            "enemy_march": e_march,
+            "enemy_rally": e_rally
+        })
+
+# --- Assignment Logic (Dynamic Persistence) ---
+master_results = []
+remaining_players = all_player_names.copy()
+# Used to track players already assigned in this current run across all targets
+global_assigned_set = set()
+
+if not is_multi:
+    # Single mode logic
+    with c1:
+        default_sel = remaining_players[:limit_per_target]
+        selected = st.multiselect("Select Players", remaining_players, default=default_sel)
+        manual_add = st.text_input("Manual Add (Optional)", placeholder="e.g. 45 1:30")
+        
+    current_pool = [p for p in roster_data if p['name'] in selected]
+    if manual_add:
+        for i, t_str in enumerate(manual_add.replace(",", " ").split()):
+            s = parse_seconds(t_str)
+            if s > 0: current_pool.append({"name": f"Manual-{i+1}", "time": s})
+    targets_list[0]['assigned_pool'] = current_pool
+
+else:
+    # Multi Mode Assignment with Persistence
+    st.markdown(f"### 👮 Assign Players (Max {limit_per_target} per Target)")
+    cols = st.columns(len(targets_list)) if len(targets_list) > 0 else [st.container()]
+    
+    for i, target in enumerate(targets_list):
+        t_name = target['name']
+        
+        with cols[i % len(cols)]: 
+            st.markdown(f"**Target: {t_name}**")
+            
+            # --- Logic: Determine Default Selection ---
+            
+            # 1. Check if we have a saved memory for this target
+            if t_name in st.session_state.saved_assignments:
+                # Use the SAVED list (keep old settings)
+                # But filter to make sure they still exist in roster
+                saved_list = st.session_state.saved_assignments[t_name]
+                valid_saved = [p for p in saved_list if p in all_player_names]
+                default_picks = valid_saved
+            else:
+                # 2. If NEW target, use Waterfall (Top N from remaining)
+                # We calculate 'remaining' based on what hasn't been used globally yet
+                current_available = [p for p in remaining_players if p not in global_assigned_set]
+                default_picks = current_available[:limit_per_target]
+
+            # Render Multiselect
+            selected_for_target = st.multiselect(
+                f"Pick for {t_name}", 
+                options=remaining_players, # Show everyone available in roster (optional: hide used)
+                default=default_picks, 
+                key=f"multi_select_{i}_{t_name}" # Unique key ensures persistence
+            )
+            
+            # --- Update State ---
+            # 1. Save this selection to memory (so it sticks next time)
+            st.session_state.saved_assignments[t_name] = selected_for_target
+            
+            # 2. Mark these players as 'used' for the waterfall calculation of the NEXT target
+            global_assigned_set.update(selected_for_target)
+            
+            # 3. Assign data to target object
+            pool = [p for p in roster_data if p['name'] in selected_for_target]
+            target['assigned_pool'] = pool
+
+
+# --- Calculation Loop ---
+st.write("---")
+
+display_sections = [] 
+
+for target in targets_list:
+    pool = target.get('assigned_pool', [])
+    
+    if not pool:
+        continue
+
+    starter = max(pool, key=lambda x: x['time']) 
+    max_time = starter['time']
+    
+    if is_defense:
+        e_sec = parse_seconds(target['enemy_rally'])
+        # [Rule] Defense Impact = Rally + March + 1s Buffer
+        impact_time = e_sec + target['enemy_march'] + 1
+        if impact_time == 1: impact_time = max_time 
+        mode_title = f"🛡️ {target['name']} (Impact: {impact_time}s)"
+    else:
+        impact_time = max_time
+        mode_title = f"⚔️ {target['name']} (Max: {max_time}s)"
+
+    target_results = []
+    copy_lines = [f"--- Plan: {target['name']} ---"]
+    
+    pool.sort(key=lambda x: x['time'], reverse=True)
+    
+    for i, p in enumerate(pool):
+        wait = impact_time - p['time']
+        is_late = is_defense and wait < 0
+        
+        # [Filter] Hide Late Players
+        if is_late: continue
+        
+        if wait == 0: action = "SEND"
+        else: action = f"Wait {wait}s"
+        
+        res_obj = {
+            "target": target['name'],
+            "name": p['name'],
+            "travel": p['time'],
+            "wait": wait,
+            "action": action,
+            "role": "Starter" if i==0 else "Follower"
+        }
+        target_results.append(res_obj)
+        master_results.append(res_obj)
+        copy_lines.append(f"[{p['name']}]: {action}")
+
+    if target_results:
+        target_results.sort(key=lambda x: x['wait'])
+        
+        df_disp = pd.DataFrame([{
+            "Role": r['role'], "Player": r['name'], 
+            "Travel": f"{r['travel']}s", "Action": r['action']
+        } for r in target_results])
+        
+        display_sections.append({
+            "title": mode_title,
+            "df": df_disp,
+            "copy_text": "\n".join(copy_lines)
+        })
+
+# --- Display Plans ---
+if display_sections:
+    if is_multi:
+        st.subheader("📋 Strategy Plans")
+        # Use columns if tabs are too crowded, or stay with tabs
+        my_tabs = st.tabs([d['title'] for d in display_sections])
+        for i, tab in enumerate(my_tabs):
+            with tab:
+                c1, c2 = st.columns([2, 1])
+                with c1: st.dataframe(display_sections[i]['df'], hide_index=True, use_container_width=True)
+                with c2: st.text_area("Copy", display_sections[i]['copy_text'], height=200)
+    else:
+        d = display_sections[0]
+        st.subheader(d['title'])
+        c1, c2 = st.columns([2, 1])
+        with c1: st.dataframe(d['df'], hide_index=True, use_container_width=True)
+        with c2: st.text_area("Copy", d['copy_text'], height=200)
+
+else:
+    st.warning("⚠️ No valid plans generated. Check players or times.")
+
+
+# --- Live Dashboard ---
+st.divider()
+st.write("### ⏱️ Master Live Sequence")
+
+if st.button("🚀 Start Sequence (All Targets)", type="primary", use_container_width=True):
+    start_ts = time.time()
+    
+    if master_results:
+        max_wait_total = max([r['wait'] for r in master_results])
+        max_impact = 0
+        for t in targets_list:
+             imp = parse_seconds(t['enemy_rally']) + t['enemy_march'] + 1
+             if imp > max_impact: max_impact = imp
+        max_wait_total = max(max_wait_total, max_impact)
+    else:
+        max_wait_total = 0
+
+    l_col1, l_col2 = st.columns([1, 2])
+    with l_col1:
+        spotlight = st.empty()
+        st.caption("Monitoring all targets...")
+    with l_col2:
+        table_ph = st.empty()
+
+    while True:
+        elapsed = time.time() - start_ts
+        live_rows = []
+        
+        # 1. Show Enemy Impacts
+        if is_defense:
+            for t in targets_list:
+                imp = parse_seconds(t['enemy_rally']) + t['enemy_march'] + 1
+                left = imp - elapsed
+                status = "💥 IMPACT" if left <= 0 else f"⚔️ {left:.1f}s"
+                live_rows.append({"Target": t['name'], "Player": "🔴 ENEMY", "Status": status, "SortKey": left})
+
+        # 2. Show Player Actions
+        all_sent = True
+        next_event_time = 9999
+        next_event_text = "✅ All Clear"
+        
+        for res in master_results:
+            time_left = res['wait'] - elapsed
+            p_label = f"{res['name']} ({res['travel']}s)"
+            
+            if time_left <= 0:
+                status = "✅ SENT"
+                sort_key = -999 
+            else:
+                all_sent = False
+                status = f"⏳ {time_left:.1f}s"
+                sort_key = time_left
+                
+                if time_left < next_event_time:
+                    next_event_time = time_left
+                    next_event_text = f"🚀 {res['name']} \n➜ {res['target']}\nin {time_left:.1f}s"
+
+            live_rows.append({
+                "Target": res['target'],
+                "Player": p_label, 
+                "Status": status, 
+                "SortKey": sort_key
+            })
+        
+        live_rows.sort(key=lambda x: x['SortKey'])
+        
+        if all_sent:
+            spotlight.success("## ✅ Complete")
+        elif next_event_time < 3:
+            spotlight.error(f"## {next_event_text}")
+        else:
+            spotlight.info(f"## {next_event_text}")
+
+        df_live = pd.DataFrame(live_rows).drop(columns=["SortKey"])
+        table_ph.dataframe(df_live, use_container_width=True, hide_index=True)
+        
+        if all_sent and elapsed > (max_wait_total + 3):
+            break
+            
+        time.sleep(0.1)
+    
+    st.success("All sequences finished.")
