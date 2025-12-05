@@ -162,9 +162,9 @@ with col2:
     if is_defense:
         c2a, c2b = st.columns(2)
         with c2a:
-            enemy_march = st.number_input("Enemy March (s)", min_value=0, value=0, step=1)
+            enemy_march = st.number_input("Enemy March Walk Time (s)", min_value=0, value=0, step=1)
         with c2b:
-            enemy_rally = st.text_input("Enemy Rally (m:s)", value="0:00")
+            enemy_rally = st.text_input("Countdown to the Rally (m:s)", value="0:00")
         target_name = "Defense Target"
         st.caption("ℹ️ 自動加入 1 秒緩衝 (Target = Enemy + 1s)")
     else:
@@ -348,3 +348,4 @@ else:
         
         if not is_defense: st.balloons()
         st.success("Sequence Finished")
+
