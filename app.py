@@ -51,7 +51,7 @@ if 'roster' not in st.session_state:
     with st.spinner('Loading roster...'):
         st.session_state.roster = load_roster()
 
-# [New] Initialize Assignment Memory
+# Initialize Assignment Memory
 if 'saved_assignments' not in st.session_state:
     st.session_state.saved_assignments = {}
 
@@ -131,7 +131,7 @@ if is_multi:
     with c_info:
         st.info(f"💡 **Dynamic Mode:** Adding rows won't reset existing assignments. Waterfall fills new targets.")
     with c_reset:
-        if st.button("🔄 Reset All Allocations"):
+        if st.button("🔄 Reset All"):
             st.session_state.saved_assignments = {}
             st.rerun()
 
@@ -186,11 +186,9 @@ else:
 # --- Assignment Logic (Dynamic Persistence) ---
 master_results = []
 remaining_players = all_player_names.copy()
-# Used to track players already assigned in this current run across all targets
 global_assigned_set = set()
 
 if not is_multi:
-    # Single mode logic
     with c1:
         default_sel = remaining_players[:limit_per_target]
         selected = st.multiselect("Select Players", remaining_players, default=default_sel)
@@ -204,47 +202,32 @@ if not is_multi:
     targets_list[0]['assigned_pool'] = current_pool
 
 else:
-    # Multi Mode Assignment with Persistence
     st.markdown(f"### 👮 Assign Players (Max {limit_per_target} per Target)")
     cols = st.columns(len(targets_list)) if len(targets_list) > 0 else [st.container()]
     
     for i, target in enumerate(targets_list):
         t_name = target['name']
-        
         with cols[i % len(cols)]: 
             st.markdown(f"**Target: {t_name}**")
             
-            # --- Logic: Determine Default Selection ---
-            
-            # 1. Check if we have a saved memory for this target
             if t_name in st.session_state.saved_assignments:
-                # Use the SAVED list (keep old settings)
-                # But filter to make sure they still exist in roster
                 saved_list = st.session_state.saved_assignments[t_name]
                 valid_saved = [p for p in saved_list if p in all_player_names]
                 default_picks = valid_saved
             else:
-                # 2. If NEW target, use Waterfall (Top N from remaining)
-                # We calculate 'remaining' based on what hasn't been used globally yet
                 current_available = [p for p in remaining_players if p not in global_assigned_set]
                 default_picks = current_available[:limit_per_target]
 
-            # Render Multiselect
             selected_for_target = st.multiselect(
                 f"Pick for {t_name}", 
-                options=remaining_players, # Show everyone available in roster (optional: hide used)
+                options=remaining_players,
                 default=default_picks, 
-                key=f"multi_select_{i}_{t_name}" # Unique key ensures persistence
+                key=f"multi_select_{i}_{t_name}"
             )
             
-            # --- Update State ---
-            # 1. Save this selection to memory (so it sticks next time)
             st.session_state.saved_assignments[t_name] = selected_for_target
-            
-            # 2. Mark these players as 'used' for the waterfall calculation of the NEXT target
             global_assigned_set.update(selected_for_target)
             
-            # 3. Assign data to target object
             pool = [p for p in roster_data if p['name'] in selected_for_target]
             target['assigned_pool'] = pool
 
@@ -285,14 +268,19 @@ for target in targets_list:
         # [Filter] Hide Late Players
         if is_late: continue
         
-        if wait == 0: action = "SEND"
-        else: action = f"Wait {wait}s"
+        if wait == 0: 
+            action = "SEND"
+            send_str = "T + 0s (NOW)"
+        else: 
+            action = f"Wait {wait}s"
+            send_str = f"T + {wait}s"
         
         res_obj = {
             "target": target['name'],
             "name": p['name'],
             "travel": p['time'],
             "wait": wait,
+            "send_str": send_str, # [New Field]
             "action": action,
             "role": "Starter" if i==0 else "Follower"
         }
@@ -303,9 +291,13 @@ for target in targets_list:
     if target_results:
         target_results.sort(key=lambda x: x['wait'])
         
+        # [New] Added 'Send @' column
         df_disp = pd.DataFrame([{
-            "Role": r['role'], "Player": r['name'], 
-            "Travel": f"{r['travel']}s", "Action": r['action']
+            "Role": r['role'], 
+            "Player": r['name'], 
+            "Travel": f"{r['travel']}s", 
+            "🚀 Send @": r['send_str'], # Show clear send time
+            "Action": r['action']
         } for r in target_results])
         
         display_sections.append({
@@ -318,7 +310,6 @@ for target in targets_list:
 if display_sections:
     if is_multi:
         st.subheader("📋 Strategy Plans")
-        # Use columns if tabs are too crowded, or stay with tabs
         my_tabs = st.tabs([d['title'] for d in display_sections])
         for i, tab in enumerate(my_tabs):
             with tab:
