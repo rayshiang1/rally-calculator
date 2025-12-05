@@ -57,18 +57,32 @@ if 'saved_assignments' not in st.session_state:
 
 # --- Utility Functions ---
 def parse_seconds(time_str: str) -> int:
+    """
+    Parses string inputs into seconds.
+    - "90" -> 90
+    - "1:30" -> 90
+    - "1m 30s" -> 90
+    """
     time_str = str(time_str).lower().strip()
-    if time_str.isdigit(): return int(time_str)
+    
+    # 1. Check for pure number (default to seconds)
+    if time_str.isdigit(): 
+        return int(time_str)
+    
+    # 2. Check for mm:ss format
     if ":" in time_str:
         parts = time_str.split(":")
         if len(parts) == 2:
             try: return int(parts[0]) * 60 + int(parts[1])
             except: pass
+            
+    # 3. Check for 1m 30s format
     seconds = 0
     match_m = re.search(r"(\d+)m", time_str)
     match_s = re.search(r"(\d+)s", time_str)
     if match_m: seconds += int(match_m.group(1)) * 60
     if match_s: seconds += int(match_s.group(1))
+    
     return seconds if seconds > 0 else 0
 
 # --- Sidebar ---
@@ -129,7 +143,7 @@ targets_list = []
 if is_multi:
     c_info, c_reset = st.columns([4, 1])
     with c_info:
-        st.info(f"💡 **Dynamic Mode:** Adding rows won't reset existing assignments. Waterfall fills new targets.")
+        st.info(f"💡 **Dynamic Mode:** Adding rows won't reset existing assignments. Time format: '1:30' or just '90' (seconds).")
     with c_reset:
         if st.button("🔄 Reset All"):
             st.session_state.saved_assignments = {}
@@ -138,7 +152,7 @@ if is_multi:
     # Initialize Table
     if 'multi_target_df' not in st.session_state:
         st.session_state.multi_target_df = pd.DataFrame(
-            [{"Target Name": "Rally A", "March (s)": 30, "Rally (m:s)": "5:00"}]
+            [{"Target Name": "Rally A", "March (s)": 30, "Rally (m:s)": "300"}] # Default example using seconds
         )
 
     edited_df = st.data_editor(
@@ -148,7 +162,7 @@ if is_multi:
         column_config={
             "Target Name": st.column_config.TextColumn("Target Name", help="Unique Name Required", required=True),
             "March (s)": st.column_config.NumberColumn("March (s)", min_value=0, step=1, required=True),
-            "Rally (m:s)": st.column_config.TextColumn("Rally (m:s)", required=True),
+            "Rally (m:s)": st.column_config.TextColumn("Rally (m:s)", help="e.g. '5:00' or '300' (seconds)", required=True),
         }
     )
     
@@ -169,7 +183,7 @@ else:
         st.markdown("### Target")
         if is_defense:
             e_march = st.number_input("Enemy March (s)", 0, step=1)
-            e_rally = st.text_input("Countdown (m:s)", "0:00")
+            e_rally = st.text_input("Countdown (m:s or s)", "0:00")
             t_name = "Defense"
             st.caption("ℹ️ Auto +1s Buffer (Target = Enemy + 1s)")
         else:
@@ -247,8 +261,7 @@ for target in targets_list:
     max_time = starter['time']
     
     if is_defense:
-        e_sec = parse_seconds(target['enemy_rally'])
-        # [Rule] Defense Impact = Rally + March + 1s Buffer
+        e_sec = parse_seconds(target['enemy_rally']) # <--- Function handles pure seconds correctly
         impact_time = e_sec + target['enemy_march'] + 1
         if impact_time == 1: impact_time = max_time 
         mode_title = f"🛡️ {target['name']} (Impact: {impact_time}s)"
@@ -280,7 +293,7 @@ for target in targets_list:
             "name": p['name'],
             "travel": p['time'],
             "wait": wait,
-            "send_str": send_str, # [New Field]
+            "send_str": send_str,
             "action": action,
             "role": "Starter" if i==0 else "Follower"
         }
@@ -291,12 +304,11 @@ for target in targets_list:
     if target_results:
         target_results.sort(key=lambda x: x['wait'])
         
-        # [New] Added 'Send @' column
         df_disp = pd.DataFrame([{
             "Role": r['role'], 
             "Player": r['name'], 
             "Travel": f"{r['travel']}s", 
-            "🚀 Send @": r['send_str'], # Show clear send time
+            "🚀 Send @": r['send_str'],
             "Action": r['action']
         } for r in target_results])
         
@@ -306,22 +318,20 @@ for target in targets_list:
             "copy_text": "\n".join(copy_lines)
         })
 
-# --- Display Plans ---
+# --- Display Plans (Independent Blocks) ---
 if display_sections:
-    if is_multi:
-        st.subheader("📋 Strategy Plans")
-        my_tabs = st.tabs([d['title'] for d in display_sections])
-        for i, tab in enumerate(my_tabs):
-            with tab:
-                c1, c2 = st.columns([2, 1])
-                with c1: st.dataframe(display_sections[i]['df'], hide_index=True, use_container_width=True)
-                with c2: st.text_area("Copy", display_sections[i]['copy_text'], height=200)
-    else:
-        d = display_sections[0]
-        st.subheader(d['title'])
-        c1, c2 = st.columns([2, 1])
-        with c1: st.dataframe(d['df'], hide_index=True, use_container_width=True)
-        with c2: st.text_area("Copy", d['copy_text'], height=200)
+    st.subheader("📋 Strategy Plans")
+    
+    # [New Display Logic] Independent blocks instead of Tabs
+    for section in display_sections:
+        with st.container(border=True): # Independent container for each target
+            st.markdown(f"#### {section['title']}")
+            
+            c_table, c_copy = st.columns([3, 1])
+            with c_table:
+                st.dataframe(section['df'], hide_index=True, use_container_width=True)
+            with c_copy:
+                st.text_area(f"Copy ({section['title']})", section['copy_text'], height=150, key=f"copy_{section['title']}")
 
 else:
     st.warning("⚠️ No valid plans generated. Check players or times.")
