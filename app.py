@@ -168,7 +168,7 @@ with col2:
 
 st.divider()
 
-# --- 計算邏輯 (保持不變) ---
+# --- 計算邏輯 ---
 
 all_pool = []
 for label in selected_labels:
@@ -210,6 +210,12 @@ else:
         t = p["time"]
         wait_seconds = impact_time_rel - t
         is_late = is_defense and wait_seconds < 0
+        
+        # --- [修改部分] 過濾掉遲到的人 ---
+        if is_late:
+            continue
+        # -------------------------------
+
         results.append({"name": p["name"], "travel": t, "wait": wait_seconds, "is_late": is_late})
     
     results.sort(key=lambda x: x['wait'])
@@ -225,6 +231,7 @@ else:
         else:
             role_icon = f"{i+1}️⃣ Follower"
 
+        # 因為上面已經把 is_late 的人過濾掉了，這裡的 is_late 判斷其實不會執行，但保留結構無妨
         if res['is_late']:
             status = "💀 TOO LATE"
             action = "SKIP"
@@ -254,7 +261,7 @@ else:
 
     st.divider()
 
-    # --- Live Dashboard (保持不變) ---
+    # --- Live Dashboard ---
     st.write("### ⏱️ Live Sequence")
     
     if st.button("🚀 Start Sequence (Lock Time)", type="primary", use_container_width=True):
@@ -294,6 +301,7 @@ else:
             for res in results:
                 name_disp = f"{res['name']} ({res['travel']}s)"
                 
+                # 同樣，因為 upstream 已經過濾，這個區塊不會被觸發
                 if res['is_late']:
                     current_status.append({"Player": name_disp, "Status": "💀 LATE"})
                     continue
