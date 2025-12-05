@@ -17,6 +17,8 @@ hide_st_style = """
             header {visibility: hidden;}
             div.block-container {padding-top: 2rem;}
             .stDataFrame {width: 100%;}
+            /* Make text areas smaller/compact */
+            .stTextArea textarea {font-size: 12px; font-family: monospace;}
             </style>
             """
 st.markdown(hide_st_style, unsafe_allow_html=True)
@@ -120,7 +122,6 @@ st.divider()
 
 # --- Data Prep ---
 roster_data = [{"name": n, "time": t} for n, t in st.session_state.roster.items()]
-# Sort by Time Descending (Slowest first)
 roster_data.sort(key=lambda x: x['time'], reverse=True) 
 all_player_names = [p['name'] for p in roster_data]
 
@@ -202,62 +203,41 @@ else:
     st.markdown(f"### 👮 Assign Players (Max {limit_per_target} per Target)")
     cols = st.columns(len(targets_list)) if len(targets_list) > 0 else [st.container()]
     
-    # [Fix] Clean up saved_assignments for deleted targets
     current_target_names = [t['name'] for t in targets_list]
     keys_to_remove = [k for k in st.session_state.saved_assignments if k not in current_target_names]
     for k in keys_to_remove:
         del st.session_state.saved_assignments[k]
 
-    # Iterate targets
     for i, target in enumerate(targets_list):
         t_name = target['name']
         with cols[i % len(cols)]: 
             st.markdown(f"**Target: {t_name}**")
             
-            # --- Step 1: Identify who is busy in OTHER targets ---
+            # Exclusion Logic
             busy_players = set()
             for other_name, assigned_list in st.session_state.saved_assignments.items():
-                if other_name != t_name: # Don't count self
+                if other_name != t_name: 
                     busy_players.update(assigned_list)
             
-            # --- Step 2: Determine Available Options for THIS target ---
-            # Available = All players NOT busy elsewhere
             available_options = [p for p in all_player_names if p not in busy_players]
             
-            # --- Step 3: Determine Default Selection ---
             if t_name in st.session_state.saved_assignments:
-                # If memory exists, use memory (filtered by availability logic just in case)
                 saved_list = st.session_state.saved_assignments[t_name]
-                # Ensure saved players are still valid (not busy elsewhere due to conflict)
-                # Note: We prioritize the current target's memory, but user can change it
                 default_picks = [p for p in saved_list if p in all_player_names]
             else:
-                # If new, Waterfall from available
                 default_picks = available_options[:limit_per_target]
 
-            # --- Step 4: Render ---
-            # options MUST include default_picks to avoid Streamlit error
-            # Ideally, default_picks are a subset of available_options. 
-            # If a player is in default_picks but also in busy_players (conflict), 
-            # we should technically remove them or flag them. Here we prioritize availability.
-            
             final_options = available_options
-            
-            # Sanity check: Ensure defaults are in options
-            # If a player was saved here, but is now selected in another box (rare race condition),
-            # they might not be in available_options. We let the UI handle valid flow.
             safe_defaults = [p for p in default_picks if p in final_options]
 
             selected_for_target = st.multiselect(
                 f"Pick for {t_name}", 
-                options=final_options, # <--- Only show available players!
+                options=final_options,
                 default=safe_defaults, 
                 key=f"multi_select_{i}_{t_name}"
             )
             
-            # Save to state
             st.session_state.saved_assignments[t_name] = selected_for_target
-            
             pool = [p for p in roster_data if p['name'] in selected_for_target]
             target['assigned_pool'] = pool
 
@@ -313,7 +293,7 @@ for target in targets_list:
             "enemy_march": target['enemy_march']
         }
         target_results.append(res_obj)
-        master_results.extend(target_results) 
+        master_results.append(res_obj) # [Fixed] Changed from extend() to append() to prevent duplicates
         copy_lines.append(f"[{p['name']}]: {action}")
 
     if target_results:
@@ -332,16 +312,34 @@ for target in targets_list:
             "copy_text": "\n".join(copy_lines)
         })
 
+# --- Display Plans (Grid View) ---
 if display_sections:
     st.subheader("📋 Strategy Plans")
-    for section in display_sections:
-        with st.container(border=True):
-            st.markdown(f"#### {section['title']}")
-            c_table, c_copy = st.columns([3, 1])
-            with c_table:
-                st.dataframe(section['df'], hide_index=True, use_container_width=True)
-            with c_copy:
-                st.text_area(f"Copy", section['copy_text'], height=150, key=f"copy_{section['title']}")
+    
+    # [Fixed] Compact Grid Layout
+    # Create 2 Columns per row
+    for i in range(0, len(display_sections), 2):
+        row_cols = st.columns(2)
+        
+        # Display 1st item in left column
+        with row_cols[0]:
+            sec = display_sections[i]
+            with st.container(border=True):
+                st.markdown(f"#### {sec['title']}")
+                st.dataframe(sec['df'], hide_index=True, use_container_width=True)
+                # Reduced height to 100
+                st.text_area(f"Copy", sec['copy_text'], height=100, key=f"copy_{i}")
+        
+        # Display 2nd item in right column (if exists)
+        if i + 1 < len(display_sections):
+            with row_cols[1]:
+                sec = display_sections[i+1]
+                with st.container(border=True):
+                    st.markdown(f"#### {sec['title']}")
+                    st.dataframe(sec['df'], hide_index=True, use_container_width=True)
+                    # Reduced height to 100
+                    st.text_area(f"Copy", sec['copy_text'], height=100, key=f"copy_{i+1}")
+
 else:
     st.warning("⚠️ No valid plans generated. Check players or times.")
 
@@ -364,10 +362,24 @@ if st.button("🚀 Start Sequence (All Targets)", type="primary", use_container_
     
     unique_target_names = list(set([r['target'] for r in master_results]))
     
-    for t_name in unique_target_names:
-        with st.container(border=True):
-            st.markdown(f"#### 📡 Live: {t_name}")
-            target_placeholders[t_name] = st.empty()
+    # Live Dashboard Grid View as well
+    for i in range(0, len(unique_target_names), 2):
+        l_cols = st.columns(2)
+        
+        # Left Block
+        t_name = unique_target_names[i]
+        with l_cols[0]:
+            with st.container(border=True):
+                st.markdown(f"#### 📡 Live: {t_name}")
+                target_placeholders[t_name] = st.empty()
+        
+        # Right Block (if exists)
+        if i + 1 < len(unique_target_names):
+            t_name_2 = unique_target_names[i+1]
+            with l_cols[1]:
+                with st.container(border=True):
+                    st.markdown(f"#### 📡 Live: {t_name_2}")
+                    target_placeholders[t_name_2] = st.empty()
 
     while True:
         elapsed = time.time() - start_ts
