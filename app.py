@@ -2,8 +2,10 @@ import streamlit as st
 import time
 import re
 import pandas as pd
-import json
+import requests
 import os
+
+GAS_URL = "https://script.google.com/macros/s/AKfycbwYKFTNQTeoaATKxillgfdFgwJnTS4o7J0nkOG077GNcJFJGKw9xd151yFdvUdoB_r5QQ/exec"
 
 st.set_page_config(page_title="War Sync Calc", page_icon="⚔️", layout="wide")
 
@@ -17,22 +19,49 @@ hide_st_style = """
             """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
-ROSTER_FILE = "roster.json"
+# --- Google Sheet 串接函式 ---
 
 def load_roster():
-    if os.path.exists(ROSTER_FILE):
-        try:
-            with open(ROSTER_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except: return {}
-    return {}
+    """從 Google Sheet 讀取資料"""
+    try:
+        if "你的_ID_亂碼" in GAS_URL:
+            st.error("⚠️ 請先在程式碼中填入正確的 GAS_URL")
+            return {}
+        response = requests.get(GAS_URL)
+        if response.status_code == 200:
+            return response.json() # 回傳格式: {"Name": time_int, ...}
+        return {}
+    except Exception as e:
+        st.error(f"連線失敗: {e}")
+        return {}
 
-def save_roster(data):
-    with open(ROSTER_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+def update_player_in_sheet(name, seconds):
+    """新增或更新玩家"""
+    try:
+        requests.post(GAS_URL, json={
+            "action": "upsert",
+            "name": name,
+            "time": seconds
+        })
+    except Exception as e:
+        st.error(f"儲存失敗: {e}")
 
+def delete_player_from_sheet(name):
+    """刪除玩家"""
+    try:
+        requests.post(GAS_URL, json={
+            "action": "delete",
+            "name": name
+        })
+    except Exception as e:
+        st.error(f"刪除失敗: {e}")
+
+# 初始化 Session State
 if 'roster' not in st.session_state:
-    st.session_state.roster = load_roster()
+    with st.spinner('Loading roster from Google Sheet...'):
+        st.session_state.roster = load_roster()
+
+# --- 工具函式 ---
 
 def parse_seconds(time_str: str) -> int:
     time_str = str(time_str).lower().strip()
@@ -56,6 +85,8 @@ def format_timer(seconds: float) -> str:
     m, s = divmod(int(seconds), 60)
     return f"{m:02d}:{s:02d}"
 
+# --- 側邊欄 (Roster Manager) ---
+
 with st.sidebar:
     st.header("👥 Roster Manager")
     
@@ -66,9 +97,14 @@ with st.sidebar:
         if st.button("Save / Update"):
             secs = parse_seconds(new_time_str)
             if new_name and secs > 0:
-                action = "Updated" if new_name in st.session_state.roster else "Added"
+                # 1. 更新 Google Sheet
+                with st.spinner('Saving to Google Sheet...'):
+                    update_player_in_sheet(new_name, secs)
+                
+                # 2. 更新本地 Session State (避免重新讀取整個表，增加速度感)
                 st.session_state.roster[new_name] = secs
-                save_roster(st.session_state.roster)
+                
+                action = "Updated" if new_name in st.session_state.roster else "Added"
                 st.success(f"{action} {new_name} ({secs}s)")
                 time.sleep(0.5)
                 st.rerun()
@@ -77,11 +113,24 @@ with st.sidebar:
 
     if st.session_state.roster:
         st.write("---")
+        # 重新整理按鈕 (如果多人同時使用，可以手動同步)
+        if st.button("🔄 Sync with Sheet"):
+             st.session_state.roster = load_roster()
+             st.rerun()
+
         to_remove = st.selectbox("Select to delete", [""] + list(st.session_state.roster.keys()))
         if to_remove and st.button(f"Delete {to_remove}", type="secondary"):
-            del st.session_state.roster[to_remove]
-            save_roster(st.session_state.roster)
+            # 1. 從 Google Sheet 刪除
+            with st.spinner('Deleting...'):
+                delete_player_from_sheet(to_remove)
+            
+            # 2. 從本地移除
+            if to_remove in st.session_state.roster:
+                del st.session_state.roster[to_remove]
+            
             st.rerun()
+
+# --- 主畫面 ---
 
 st.title("⚔️ War Sync Calculator")
 
@@ -118,6 +167,8 @@ with col2:
         target_name = st.text_input("Target Name", value="Target")
 
 st.divider()
+
+# --- 計算邏輯 (保持不變) ---
 
 all_pool = []
 for label in selected_labels:
@@ -203,7 +254,7 @@ else:
 
     st.divider()
 
-    # --- Live Dashboard ---
+    # --- Live Dashboard (保持不變) ---
     st.write("### ⏱️ Live Sequence")
     
     if st.button("🚀 Start Sequence (Lock Time)", type="primary", use_container_width=True):
@@ -215,7 +266,6 @@ else:
         else:
             max_wait = 0
         
-        # 版面配置：左邊大字提示，右邊詳細表格
         live_col1, live_col2 = st.columns([1, 2])
         
         with live_col1:
@@ -229,17 +279,14 @@ else:
             elapsed = time.time() - start_ts
             current_status = []
             
-            # 1. 敵軍/目標狀態
             if is_defense:
                 enemy_left = impact_time_rel - elapsed
                 e_state = "💥 IMPACT" if enemy_left <= 0 else f"⚔️ {int(enemy_left)}s"
                 current_status.append({"Player": "🔴 ENEMY", "Status": e_state, "Wait": enemy_left})
                 
-                # 更新進度條 (倒數 Enemy Arrival)
                 prog_val = 1.0 - (enemy_left / impact_time_rel) if impact_time_rel > 0 else 0
                 progress_bar.progress(min(max(prog_val, 0.0), 1.0))
 
-            # 2. 玩家狀態
             all_done = True
             next_action_text = "✅ All Sent"
             next_action_time = 999999
@@ -259,22 +306,19 @@ else:
                     all_done = False
                     current_status.append({"Player": name_disp, "Status": f"⏳ {time_left:.1f}s"})
                     
-                    # 找出最接近的一個行動
                     if time_left < next_action_time:
                         next_action_time = time_left
                         next_action_text = f"🚀 Next: {res['name']}\nin {time_left:.1f}s"
 
-            # 更新左側大字
             if all_done:
                 spotlight.success("## ✅ Complete")
             elif next_action_time < 2:
-                spotlight.error(f"## {next_action_text}") # 快到了變紅色
+                spotlight.error(f"## {next_action_text}")
             else:
                 spotlight.info(f"## {next_action_text}")
 
-            # 更新右側表格
             df_live = pd.DataFrame(current_status)
-            if "Wait" in df_live.columns: df_live = df_live.drop(columns=["Wait"]) # 隱藏計算欄位
+            if "Wait" in df_live.columns: df_live = df_live.drop(columns=["Wait"])
             table_ph.dataframe(df_live, use_container_width=True, hide_index=True)
             
             defense_end = (not is_defense) or (is_defense and (impact_time_rel - elapsed <= 0))
