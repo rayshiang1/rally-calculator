@@ -95,9 +95,11 @@ with col1:
     
     sorted_options = sorted(roster_options.keys(), key=lambda k: roster_options[k]['time'], reverse=True)
     
+    # ★ 修改處：加入 default=sorted_options 全選所有名單
     selected_labels = st.multiselect(
-        "Who is available? (Select everyone online)", 
+        "Who is available? (Uncheck offline players)", 
         options=sorted_options,
+        default=sorted_options, 
         placeholder="Select online players..."
     )
     
@@ -133,7 +135,7 @@ if manual_input:
             all_pool.append({"name": f"Manual-{i+1}", "time": s})
 
 if not all_pool:
-    st.info("👈 Please select players.")
+    st.info("👈 Please check players in the list.")
 else:
     all_pool.sort(key=lambda x: x['time'], reverse=True)
     
